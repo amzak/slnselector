@@ -4,7 +4,10 @@ import bearlibterminal,
     strutils,
     strformat,
     algorithm,
-    tables
+    tables,
+    sequtils,
+    encodings,
+    endians
 
 type
     SolutionItem = tuple
@@ -26,7 +29,7 @@ type
         orderMap: Table[int, int]
         invOrderMap: Table[int, int]
         selectedIndex: int
-        inputChars: seq[char]
+        inputChars: seq[int]
         inputString: string
         colors: tuple[
             black: BLColor,
@@ -36,6 +39,8 @@ type
         ]
         isRunning: bool
         executable: string
+
+    CodePage = distinct int32
 
 const
     vsPath = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\Common7\\IDE\\devenv.exe"
@@ -130,8 +135,229 @@ proc sortInvOrderMap(state: var AppState): void =
 
     state.selectedIndex = state.orderMap[0]
 
+proc multiByteToWideChar(
+    codePage: CodePage,
+    dwFlags: int32,
+    lpMultiByteStr: cstring,
+    cbMultiByte: cint,
+    lpWideCharStr: cstring,
+    cchWideChar: cint): cint {.
+        stdcall, importc: "MultiByteToWideChar", dynlib: "kernel32".}
+          
+proc wideCharToMultiByte(
+    codePage: CodePage,
+    dwFlags: int32,
+    lpWideCharStr: cstring,
+    cchWideChar: cint,
+    lpMultiByteStr: cstring,
+    cbMultiByte: cint,
+    lpDefaultChar: cstring=nil,
+    lpUsedDefaultChar: pointer=nil): cint {.
+        stdcall, importc: "WideCharToMultiByte", dynlib: "kernel32".}
+
+proc convertToWideString(codePage: CodePage, s: cstring): string =
+    ## converts `s` to `destEncoding` that was given to the converter `c`. It
+    ## assumed that `s` is in `srcEncoding`.
+    # educated guess of capacity:
+    var cap = s.len + s.len shr 2
+    result = newString(s.len*2)
+    echo "cbMultiByte=",cint(s.len)
+    # convert to utf-16 LE
+    var m = multiByteToWideChar(codePage,
+                                dwFlags = 0'i32,
+                                lpMultiByteStr = s,
+                                cbMultiByte = cint(s.len),
+                                lpWideCharStr = cstring(result),
+                                cchWideChar = cint(cap))
+    echo "m=", m
+    echo "error=", osLastError()
+    if m == 0:
+        # try again; ask for capacity:
+        cap = multiByteToWideChar(codePage,
+                                dwFlags = 0'i32,
+                                lpMultiByteStr = s,
+                                cbMultiByte = cint(s.len),
+                                lpWideCharStr = nil,
+                                cchWideChar = cint(0))
+        echo "cap=", cap
+        echo "error=", osLastError()
+        # and do the conversion properly:
+        result = newString(cap*2)
+        m = multiByteToWideChar(codePage,
+                                dwFlags = 0'i32,
+                                lpMultiByteStr = s,
+                                cbMultiByte = cint(s.len),
+                                lpWideCharStr = cstring(result),
+                                cchWideChar = cint(cap))
+        echo "error=", osLastError()
+        if m == 0: raiseOSError(osLastError())
+        setLen(result, m*2)
+    elif m <= cap:
+        setLen(result, m*2)
+    else:
+        assert(false) # cannot happen
+
+proc convertFromWideString(codePage: CodePage, s: cstring): string =
+    # if already utf-16 LE, no further need to do something:
+    if int(codePage) == 1200: 
+        return
+    # otherwise the fun starts again:
+    let charCount = s.len div 2
+    var cap = s.len + s.len shr 2
+    result = newString(cap)
+    var m = wideCharToMultiByte(
+        codePage,
+        dwFlags = 0'i32,
+        lpWideCharStr = s,
+        cchWideChar = cint(charCount),
+        lpMultiByteStr = cstring(result),
+        cbMultiByte = cap.cint)
+    if m == 0:
+        # try again; ask for capacity:
+        cap = wideCharToMultiByte(
+        codePage,
+        dwFlags = 0'i32,
+        lpWideCharStr = s,
+        cchWideChar = cint(charCount),
+        lpMultiByteStr = nil,
+        cbMultiByte = cint(0))
+        # and do the conversion properly:
+        result = newString(cap)
+        m = wideCharToMultiByte(
+        codePage,
+        dwFlags = 0'i32,
+        lpWideCharStr = s,
+        cchWideChar = cint(charCount),
+        lpMultiByteStr = cstring(result),
+        cbMultiByte = cap.cint)
+        if m == 0: raiseOSError(osLastError())
+        setLen(result, m)
+    elif m <= cap:
+        setLen(result, m)
+    else:
+        assert(false) # cannot happen
+
+proc convert(utf16: string): string =
+    ## converts `s` to `destEncoding` that was given to the converter `c`. It
+    ## assumed that `s` is in `srcEncoding`.
+
+    # special case: empty string: needed because MultiByteToWideChar
+    # return 0 in case of error:
+    let s = utf16
+    let srcCodePage = CodePage(1200)
+    let dstCodePage = CodePage(65001)
+    if s.len == 0: return ""
+    # educated guess of capacity:
+    var cap = s.len + s.len shr 2
+    result = newString(s.len*2)
+    echo "cbMultiByte=",cint(s.len)
+    # convert to utf-16 LE
+    var m = multiByteToWideChar(codePage = srcCodePage, dwFlags = 0'i32,
+                                lpMultiByteStr = cstring(s),
+                                cbMultiByte = cint(s.len),
+                                lpWideCharStr = cstring(result),
+                                cchWideChar = cint(cap))
+    echo "m=", m
+    if m == 0:
+        # try again; ask for capacity:
+        cap = multiByteToWideChar(codePage = srcCodePage, 
+                                dwFlags = 0'i32,
+                                lpMultiByteStr = cstring(s),
+                                cbMultiByte = cint(s.len),
+                                lpWideCharStr = nil,
+                                cchWideChar = cint(0))
+        echo "cap=", cap
+        # and do the conversion properly:
+        result = newString(cap*2)
+        m = multiByteToWideChar(codePage = srcCodePage, dwFlags = 0'i32,
+                                lpMultiByteStr = cstring(s),
+                                cbMultiByte = cint(s.len),
+                                lpWideCharStr = cstring(result),
+                                cchWideChar = cint(cap))
+        echo "error=", osLastError()
+        if m == 0: raiseOSError(osLastError())
+        setLen(result, m*2)
+    elif m <= cap:
+        setLen(result, m*2)
+    else:
+        assert(false) # cannot happen
+
+    # if already utf-16 LE, no further need to do something:
+    if int(dstCodePage) == 1200: return
+    # otherwise the fun starts again:
+    cap = s.len + s.len shr 2
+    var res = newString(cap)
+    m = wideCharToMultiByte(
+        codePage = dstCodePage,
+        dwFlags = 0'i32,
+        lpWideCharStr = cstring(result),
+        cchWideChar = cint(result.len div 2),
+        lpMultiByteStr = cstring(res),
+        cbMultiByte = cap.cint)
+    if m == 0:
+        # try again; ask for capacity:
+        cap = wideCharToMultiByte(
+        codePage = dstCodePage,
+        dwFlags = 0'i32,
+        lpWideCharStr = cstring(result),
+        cchWideChar = cint(result.len div 2),
+        lpMultiByteStr = nil,
+        cbMultiByte = cint(0))
+        # and do the conversion properly:
+        res = newString(cap)
+        m = wideCharToMultiByte(
+        codePage = dstCodePage,
+        dwFlags = 0'i32,
+        lpWideCharStr = cstring(result),
+        cchWideChar = cint(result.len div 2),
+        lpMultiByteStr = cstring(res),
+        cbMultiByte = cap.cint)
+        if m == 0: raiseOSError(osLastError())
+        setLen(res, m)
+        result = res
+    elif m <= cap:
+        setLen(res, m)
+        result = res
+    else:
+        assert(false) # cannot happen
+
+proc convertToLE(pdata: pointer, len: int): string =
+
+    var buf: array[0..1, byte]
+    var pbuf = addr(buf)
+    let pos = pdata
+    for i in 0..len:
+        littleEndian16(pbuf, pdata+i)
+
+proc convert2(codePageFrom: CodePage, codePageTo: CodePage, s: string): string =
+    if s.len == 0: return ""
+    let utf16CodePages = [
+        1200,
+        1201
+    ]
+
+    let isBigEndian = int(codePageFrom) == 1201
+    let cs = cstring(s)
+    let pstr = cast[pointer](cs)
+    let target = if isBigEndian: convertToLE(pstr, s.len) else: s
+
+    let isUtf16 = int(codePageFrom) in utf16CodePages
+    let intermidiate = if isUtf16: target else: convertToWideString(codePageFrom, target)
+    return convertFromWideString(codePageTo, intermidiate)
+
 proc mutateState(state: var AppState): void =
-    let newInputString = toString(state.inputChars)
+    var buff: seq[char] = @[]
+
+    for inputChar in state.inputChars:
+        let littleByte = cast[char](inputChar and 0xff)
+        let bigByte = cast[char]((inputChar shr 8) and 0xff)
+        buff.add(bigByte)
+        buff.add(littleByte)
+
+    let buffStr = toString(buff)
+    let newInputString = convert2(CodePage(1201), CodePage(65001), buffStr)
+
+    echo newInputString
 
     if cmp(newInputString, state.inputString) == 0:
         return
@@ -164,9 +390,8 @@ proc handleUpDown(state: var AppState, input: int32): void =
     moveSelection(state, delta);
 
 proc handleKeyInput(state: var AppState, input: int32): void = 
-    let incomingChar = cast[char](input);
-    if(isAlphaNumeric(incomingChar)):
-        state.inputChars.add(incomingChar);
+    echo "input=",input
+    state.inputChars.add(input)
 
 proc handleBackspace(state: var AppState): void =
     let len = state.inputChars.len
