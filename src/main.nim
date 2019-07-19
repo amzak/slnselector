@@ -321,28 +321,20 @@ proc convert(utf16: string): string =
     else:
         assert(false) # cannot happen
 
-proc convertToLE(pdata: pointer, len: int): string =
-
-    var buf: array[0..1, byte]
-    var pbuf = addr(buf)
-    let pos = pdata
-    for i in 0..len:
-        littleEndian16(pbuf, pdata+i)
-
 proc convert2(codePageFrom: CodePage, codePageTo: CodePage, s: string): string =
     if s.len == 0: return ""
-    let utf16CodePages = [
-        1200,
-        1201
+
+    let unsupportedCodePages = [
+        1201,
+        12000,
+        12001
     ]
 
-    let isBigEndian = int(codePageFrom) == 1201
-    let cs = cstring(s)
-    let pstr = cast[pointer](cs)
-    let target = if isBigEndian: convertToLE(pstr, s.len) else: s
+    if int(codePageFrom) in unsupportedCodePages:
+        let message = "encoding from " & codePageToName(codePageFrom) & " is not supported"
+        raise newException(EncodingError, message)
 
-    let isUtf16 = int(codePageFrom) in utf16CodePages
-    let intermidiate = if isUtf16: target else: convertToWideString(codePageFrom, target)
+    let intermidiate = if int(codePageFrom) == 1200: s else: convertToWideString(codePageFrom, s)
     return convertFromWideString(codePageTo, intermidiate)
 
 proc mutateState(state: var AppState): void =
