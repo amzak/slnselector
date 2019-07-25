@@ -5,24 +5,24 @@ import bearlibterminal,
     strformat,
     algorithm,
     tables,
-    sequtils,
     encodings,
-    endians
+    unicode
 
 type
-    SolutionItem = tuple
+    SolutionItem = object
         id: int
         label: string
         fullPath: string
         isVisible: bool
         rank: int
 
-    AppConfig = tuple
+    AppConfig = object
         white: BLColor
         black: BLColor
         front: BLColor
         back: BLColor
         executable: string
+        size: tuple[width: int, height: int]
 
     AppState = object
         items: seq[SolutionItem]
@@ -40,10 +40,8 @@ type
         isRunning: bool
         executable: string
 
-    CodePage = distinct int32
-
-const
-    vsPath = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\Common7\\IDE\\devenv.exe"
+var
+    encodingConverter = open("utf-8", "utf-16")
 
 proc toString(str: seq[char]): string =
     result = newStringOfCap(len(str))
@@ -71,8 +69,8 @@ iterator walkDir(dir: string, depth: int, skipList: openArray[string]): string =
     for path in walkDirProc(dir, depth, skipList):
         yield path
 
-proc getSolutionsList(): seq[SolutionItem] =
-    result = @[]
+proc getSolutionsList(): auto =
+    var items: seq[SolutionItem] = @[]
     var counter: int = 0
 
     let skipList = [
@@ -83,21 +81,46 @@ proc getSolutionsList(): seq[SolutionItem] =
     ]
     let appDir = getAppDir()
     echo "working in ", appDir
+
+    var maxFileLen = 0;
+    var maxLabelLen = 0;
+
     for file in walkDir(appDir, 2, skipList):
-        let (dir, name, ext) = splitFile(file)
+        let (_, name, ext) = splitFile(file)
         if ext!=".sln":
             continue
-        let newItem = (id: counter, label: name.toLower(), fullPath: file, isVisible: true, rank: 0)
-        result.add(newItem)
+        let label = name.toLower()
+
+        let fileLen = runeLen(file);
+        let labelLen = runeLen(label);
+
+        if filelen > maxFileLen: maxFileLen = filelen
+        if labellen > maxLabelLen: maxLabelLen = labellen
+
+        let newItem = SolutionItem(
+            id: counter, 
+            label: label,
+            fullPath: file.replace(appDir, "."), 
+            isVisible: true)
+
+        echo label, " ", labellen
+        echo file, " ", filelen
+
+        items.add(newItem)
         counter += 1
 
-proc render(state: AppState): void =
+    return (items, maxLabelLen, maxFileLen)
+
+proc render(config: AppConfig, state: AppState): void =
 
     terminalColor(state.colors.white)
     terminalBackgroundColor(state.colors.black)
     terminalClear()
 
     discard terminalPrint(newBLPoint(1, 1), &"> {state.inputString}")
+
+    var prevLabel: string
+    var counter = 0
 
     for solution in state.items:
         if not solution.isVisible:
@@ -109,9 +132,17 @@ proc render(state: AppState): void =
         else:
             terminalColor(state.colors.front);
             terminalBackgroundColor(state.colors.back);
+
+        prevLabel = solution.label
         let order = state.invOrderMap[solution.id]
-        discard terminalPrint(newBLPoint(1, BLInt(order) + 2), solution.label)
-    
+        let y = order + 2
+        discard terminalPrint(newBLPoint(1, BLInt(y)), solution.label)
+        counter += 1
+        if y >= config.size.height - 2:
+            break;
+    if counter < state.items.len:
+        discard terminalPrint(newBLPoint(1, BLInt(config.size.height - 1)), &"... and {state.items.len - counter} more")
+
     terminalRefresh()
 
 proc computeVisibility(input: string, items: var seq[SolutionItem]): void =
@@ -135,221 +166,17 @@ proc sortInvOrderMap(state: var AppState): void =
 
     state.selectedIndex = state.orderMap[0]
 
-proc multiByteToWideChar(
-    codePage: CodePage,
-    dwFlags: int32,
-    lpMultiByteStr: cstring,
-    cbMultiByte: cint,
-    lpWideCharStr: cstring,
-    cchWideChar: cint): cint {.
-        stdcall, importc: "MultiByteToWideChar", dynlib: "kernel32".}
-          
-proc wideCharToMultiByte(
-    codePage: CodePage,
-    dwFlags: int32,
-    lpWideCharStr: cstring,
-    cchWideChar: cint,
-    lpMultiByteStr: cstring,
-    cbMultiByte: cint,
-    lpDefaultChar: cstring=nil,
-    lpUsedDefaultChar: pointer=nil): cint {.
-        stdcall, importc: "WideCharToMultiByte", dynlib: "kernel32".}
-
-proc convertToWideString(codePage: CodePage, s: cstring): string =
-    ## converts `s` to `destEncoding` that was given to the converter `c`. It
-    ## assumed that `s` is in `srcEncoding`.
-    # educated guess of capacity:
-    var cap = s.len + s.len shr 2
-    result = newString(s.len*2)
-    echo "cbMultiByte=",cint(s.len)
-    # convert to utf-16 LE
-    var m = multiByteToWideChar(codePage,
-                                dwFlags = 0'i32,
-                                lpMultiByteStr = s,
-                                cbMultiByte = cint(s.len),
-                                lpWideCharStr = cstring(result),
-                                cchWideChar = cint(cap))
-    echo "m=", m
-    echo "error=", osLastError()
-    if m == 0:
-        # try again; ask for capacity:
-        cap = multiByteToWideChar(codePage,
-                                dwFlags = 0'i32,
-                                lpMultiByteStr = s,
-                                cbMultiByte = cint(s.len),
-                                lpWideCharStr = nil,
-                                cchWideChar = cint(0))
-        echo "cap=", cap
-        echo "error=", osLastError()
-        # and do the conversion properly:
-        result = newString(cap*2)
-        m = multiByteToWideChar(codePage,
-                                dwFlags = 0'i32,
-                                lpMultiByteStr = s,
-                                cbMultiByte = cint(s.len),
-                                lpWideCharStr = cstring(result),
-                                cchWideChar = cint(cap))
-        echo "error=", osLastError()
-        if m == 0: raiseOSError(osLastError())
-        setLen(result, m*2)
-    elif m <= cap:
-        setLen(result, m*2)
-    else:
-        assert(false) # cannot happen
-
-proc convertFromWideString(codePage: CodePage, s: cstring): string =
-    # if already utf-16 LE, no further need to do something:
-    if int(codePage) == 1200: 
-        return
-    # otherwise the fun starts again:
-    let charCount = s.len div 2
-    var cap = s.len + s.len shr 2
-    result = newString(cap)
-    var m = wideCharToMultiByte(
-        codePage,
-        dwFlags = 0'i32,
-        lpWideCharStr = s,
-        cchWideChar = cint(charCount),
-        lpMultiByteStr = cstring(result),
-        cbMultiByte = cap.cint)
-    if m == 0:
-        # try again; ask for capacity:
-        cap = wideCharToMultiByte(
-        codePage,
-        dwFlags = 0'i32,
-        lpWideCharStr = s,
-        cchWideChar = cint(charCount),
-        lpMultiByteStr = nil,
-        cbMultiByte = cint(0))
-        # and do the conversion properly:
-        result = newString(cap)
-        m = wideCharToMultiByte(
-        codePage,
-        dwFlags = 0'i32,
-        lpWideCharStr = s,
-        cchWideChar = cint(charCount),
-        lpMultiByteStr = cstring(result),
-        cbMultiByte = cap.cint)
-        if m == 0: raiseOSError(osLastError())
-        setLen(result, m)
-    elif m <= cap:
-        setLen(result, m)
-    else:
-        assert(false) # cannot happen
-
-proc convert(utf16: string): string =
-    ## converts `s` to `destEncoding` that was given to the converter `c`. It
-    ## assumed that `s` is in `srcEncoding`.
-
-    # special case: empty string: needed because MultiByteToWideChar
-    # return 0 in case of error:
-    let s = utf16
-    let srcCodePage = CodePage(1200)
-    let dstCodePage = CodePage(65001)
-    if s.len == 0: return ""
-    # educated guess of capacity:
-    var cap = s.len + s.len shr 2
-    result = newString(s.len*2)
-    echo "cbMultiByte=",cint(s.len)
-    # convert to utf-16 LE
-    var m = multiByteToWideChar(codePage = srcCodePage, dwFlags = 0'i32,
-                                lpMultiByteStr = cstring(s),
-                                cbMultiByte = cint(s.len),
-                                lpWideCharStr = cstring(result),
-                                cchWideChar = cint(cap))
-    echo "m=", m
-    if m == 0:
-        # try again; ask for capacity:
-        cap = multiByteToWideChar(codePage = srcCodePage, 
-                                dwFlags = 0'i32,
-                                lpMultiByteStr = cstring(s),
-                                cbMultiByte = cint(s.len),
-                                lpWideCharStr = nil,
-                                cchWideChar = cint(0))
-        echo "cap=", cap
-        # and do the conversion properly:
-        result = newString(cap*2)
-        m = multiByteToWideChar(codePage = srcCodePage, dwFlags = 0'i32,
-                                lpMultiByteStr = cstring(s),
-                                cbMultiByte = cint(s.len),
-                                lpWideCharStr = cstring(result),
-                                cchWideChar = cint(cap))
-        echo "error=", osLastError()
-        if m == 0: raiseOSError(osLastError())
-        setLen(result, m*2)
-    elif m <= cap:
-        setLen(result, m*2)
-    else:
-        assert(false) # cannot happen
-
-    # if already utf-16 LE, no further need to do something:
-    if int(dstCodePage) == 1200: return
-    # otherwise the fun starts again:
-    cap = s.len + s.len shr 2
-    var res = newString(cap)
-    m = wideCharToMultiByte(
-        codePage = dstCodePage,
-        dwFlags = 0'i32,
-        lpWideCharStr = cstring(result),
-        cchWideChar = cint(result.len div 2),
-        lpMultiByteStr = cstring(res),
-        cbMultiByte = cap.cint)
-    if m == 0:
-        # try again; ask for capacity:
-        cap = wideCharToMultiByte(
-        codePage = dstCodePage,
-        dwFlags = 0'i32,
-        lpWideCharStr = cstring(result),
-        cchWideChar = cint(result.len div 2),
-        lpMultiByteStr = nil,
-        cbMultiByte = cint(0))
-        # and do the conversion properly:
-        res = newString(cap)
-        m = wideCharToMultiByte(
-        codePage = dstCodePage,
-        dwFlags = 0'i32,
-        lpWideCharStr = cstring(result),
-        cchWideChar = cint(result.len div 2),
-        lpMultiByteStr = cstring(res),
-        cbMultiByte = cap.cint)
-        if m == 0: raiseOSError(osLastError())
-        setLen(res, m)
-        result = res
-    elif m <= cap:
-        setLen(res, m)
-        result = res
-    else:
-        assert(false) # cannot happen
-
-proc convert2(codePageFrom: CodePage, codePageTo: CodePage, s: string): string =
-    if s.len == 0: return ""
-
-    let unsupportedCodePages = [
-        1201,
-        12000,
-        12001
-    ]
-
-    if int(codePageFrom) in unsupportedCodePages:
-        let message = "encoding from " & codePageToName(codePageFrom) & " is not supported"
-        raise newException(EncodingError, message)
-
-    let intermidiate = if int(codePageFrom) == 1200: s else: convertToWideString(codePageFrom, s)
-    return convertFromWideString(codePageTo, intermidiate)
-
 proc mutateState(state: var AppState): void =
     var buff: seq[char] = @[]
 
     for inputChar in state.inputChars:
         let littleByte = cast[char](inputChar and 0xff)
         let bigByte = cast[char]((inputChar shr 8) and 0xff)
-        buff.add(bigByte)
         buff.add(littleByte)
+        buff.add(bigByte)
 
     let buffStr = toString(buff)
-    let newInputString = convert2(CodePage(1201), CodePage(65001), buffStr)
-
-    echo newInputString
+    let newInputString = convert(encodingConverter, buffStr)
 
     if cmp(newInputString, state.inputString) == 0:
         return
@@ -382,7 +209,6 @@ proc handleUpDown(state: var AppState, input: int32): void =
     moveSelection(state, delta);
 
 proc handleKeyInput(state: var AppState, input: int32): void = 
-    echo "input=",input
     state.inputChars.add(input)
 
 proc handleBackspace(state: var AppState): void =
@@ -396,26 +222,31 @@ proc handleEnter(state: var AppState): void =
         echo &"handling selection of {selectedItem.label} {selectedItem.fullPath}"
 
         let (workingDir, _, _) = splitFile(state.executable)
+        let appDir = getAppDir()
 
         discard startProcess(state.executable, 
             workingDir,
-            [selectedItem.fullPath])
+            [appDir / selectedItem.fullPath])
         echo "done."
         state.isRunning = false
 
 proc initAppState(config: AppConfig): AppState = 
-    let solutionsList = getSolutionsList()
+    var (solutionsList, maxLabelLen, maxFileLen) = getSolutionsList()
     var orderMap = initTable[int, int]()
     var invOrderMap = initTable[int, int]()
 
-    var maxLen = 0;
-    for solution in solutionsList:
+    echo maxLabelLen
+    echo maxFileLen
+    var max = 0;
+    for solution in solutionsList.mitems:
         orderMap[solution.id] = solution.id
         invOrderMap[solution.id] = solution.id
-        let len = terminalMeasure(solution.label).w
-        if maxLen < len: maxLen = len
+        solution.label = &"{strutils.alignLeft(solution.label, maxLabelLen)} [color=gray]\u2502 {strutils.align(solution.fullPath, maxFileLen)}[/color]"
+        echo solution.label
 
-    discard terminalSet(&"window.size={maxLen+5}x40")
+        if max < solution.label.len: max = solution.label.len
+
+    discard terminalSet(&"window.size={max+1}x{config.size.height}")
 
     return AppState(
         items: solutionsList,
@@ -442,12 +273,16 @@ terminalBackgroundColor(black);
 let frontColor = terminalGetCurrentColor();
 let backColor = terminalGetCurrentBackgroundColor()
 
-let config: AppConfig = (
-    white, 
-    black, 
-    frontColor, 
-    backColor,
-    vsPath)
+let vsHome = getEnv("VSHOME")
+echo "VSHOME=", vsHome
+let config:AppConfig = AppConfig(
+    white: white, 
+    black: black, 
+    front: frontColor, 
+    back: backColor, 
+    executable: vsHome,
+    size: (0, 40))
+
 var state = initAppState(config)
 echo &"found {state.items.len} elements"
 
@@ -457,7 +292,7 @@ state.isRunning = state.items.len > 0
 
 while state.isRunning:
     mutateState(state)
-    render(state)
+    render(config, state)
     lastInput = terminalRead()
     case lastInput:
         of TK_CLOSE, TK_ESCAPE:
@@ -474,4 +309,5 @@ while state.isRunning:
     if(terminalCheck(TK_WCHAR)):
         handleKeyInput(state, terminalState(TK_WCHAR))
 
+encodingConverter.close()
 terminalClose()
