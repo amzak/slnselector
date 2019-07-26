@@ -120,7 +120,7 @@ proc render(config: AppConfig, state: AppState): void =
     discard terminalPrint(newBLPoint(1, 1), &"> {state.inputString}")
 
     var prevLabel: string
-    var counter = 0
+    var renderedItemsCounter = 0
 
     for solution in state.items:
         if not solution.isVisible:
@@ -137,11 +137,12 @@ proc render(config: AppConfig, state: AppState): void =
         let order = state.invOrderMap[solution.id]
         let y = order + 2
         discard terminalPrint(newBLPoint(1, BLInt(y)), solution.label)
-        counter += 1
+        renderedItemsCounter += 1
         if y >= config.size.height - 2:
             break;
-    if counter < state.items.len:
-        discard terminalPrint(newBLPoint(1, BLInt(config.size.height - 1)), &"... and {state.items.len - counter} more")
+
+    if state.items.len > renderedItemsCounter:
+        discard terminalPrint(newBLPoint(1, BLInt(config.size.height - 1)), &"... and {state.items.len - renderedItemsCounter} more")
 
     terminalRefresh()
 
@@ -224,7 +225,8 @@ proc handleEnter(state: var AppState): void =
         let (workingDir, _, _) = splitFile(state.executable)
         let appDir = getAppDir()
 
-        discard startProcess(state.executable, 
+        discard startProcess(
+            state.executable, 
             workingDir,
             [appDir / selectedItem.fullPath])
         echo "done."
@@ -261,7 +263,7 @@ proc initAppState(config: AppConfig): AppState =
         executable: config.executable
     )
 
-let termid = terminalOpen()
+discard terminalOpen()
 discard terminalSet("window.title='choose project'")
 
 let white = colorFromName("white")
