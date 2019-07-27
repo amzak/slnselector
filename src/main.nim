@@ -6,39 +6,12 @@ import bearlibterminal,
     algorithm,
     tables,
     encodings,
-    unicode
-
-type
-    SolutionItem = object
-        id: int
-        label: string
-        fullPath: string
-        isVisible: bool
-        rank: int
-
-    AppConfig = object
-        white: BLColor
-        black: BLColor
-        front: BLColor
-        back: BLColor
-        executable: string
-        size: tuple[width: int, height: int]
-
-    AppState = object
-        items: seq[SolutionItem]
-        orderMap: Table[int, int]
-        invOrderMap: Table[int, int]
-        selectedIndex: int
-        inputChars: seq[int]
-        inputString: string
-        colors: tuple[
-            black: BLColor,
-            white: BLColor,
-            front: BLColor, 
-            back: BLColor
-        ]
-        isRunning: bool
-        executable: string
+    unicode,
+    appConfig,
+    domain,
+    state,
+    theme,
+    options
 
 var
     encodingConverter = open("utf-8", "utf-16")
@@ -94,8 +67,8 @@ proc getSolutionsList(): auto =
         let fileLen = runeLen(file);
         let labelLen = runeLen(label);
 
-        if filelen > maxFileLen: maxFileLen = filelen
-        if labellen > maxLabelLen: maxLabelLen = labellen
+        if fileLen > maxFileLen: maxFileLen = fileLen
+        if labelLen > maxLabelLen: maxLabelLen = labelLen
 
         let newItem = SolutionItem(
             id: counter, 
@@ -103,8 +76,8 @@ proc getSolutionsList(): auto =
             fullPath: file.replace(appDir, "."), 
             isVisible: true)
 
-        echo label, " ", labellen
-        echo file, " ", filelen
+        echo label, " ", labelLen
+        echo file, " ", fileLen
 
         items.add(newItem)
         counter += 1
@@ -113,8 +86,8 @@ proc getSolutionsList(): auto =
 
 proc render(config: AppConfig, state: AppState): void =
 
-    terminalColor(state.colors.white)
-    terminalBackgroundColor(state.colors.black)
+    terminalColor(state.colors.front)
+    terminalBackgroundColor(state.colors.back)
     terminalClear()
 
     discard terminalPrint(newBLPoint(1, 1), &"> {state.inputString}")
@@ -126,23 +99,26 @@ proc render(config: AppConfig, state: AppState): void =
         if not solution.isVisible:
             continue;
 
+        let frontColor = state.colors.front
+        let backColor = state.colors.back
+
         if state.selectedIndex == solution.id:
-            terminalColor(state.colors.back);
-            terminalBackgroundColor(state.colors.front);
+            terminalColor(backColor);
+            terminalBackgroundColor(frontColor);
         else:
-            terminalColor(state.colors.front);
-            terminalBackgroundColor(state.colors.back);
+            terminalColor(frontColor);
+            terminalBackgroundColor(backColor);
 
         prevLabel = solution.label
         let order = state.invOrderMap[solution.id]
         let y = order + 2
         discard terminalPrint(newBLPoint(1, BLInt(y)), solution.label)
         renderedItemsCounter += 1
-        if y >= config.size.height - 2:
+        if y >= config.sizeY.get() - 2:
             break;
 
     if state.items.len > renderedItemsCounter:
-        discard terminalPrint(newBLPoint(1, BLInt(config.size.height - 1)), &"... and {state.items.len - renderedItemsCounter} more")
+        discard terminalPrint(newBLPoint(1, BLInt(config.sizeY.get() - 1)), &"... and {state.items.len - renderedItemsCounter} more")
 
     terminalRefresh()
 
@@ -239,24 +215,20 @@ proc initAppState(config: AppConfig): AppState =
 
     echo maxLabelLen
     echo maxFileLen
-    var max = 0;
     for solution in solutionsList.mitems:
         orderMap[solution.id] = solution.id
         invOrderMap[solution.id] = solution.id
-        solution.label = &"{strutils.alignLeft(solution.label, maxLabelLen)} [color=gray]\u2502 {strutils.align(solution.fullPath, maxFileLen)}[/color]"
+        solution.label = &"{unicode.alignLeft(solution.label, maxLabelLen)} [color=gray]\u2502 {unicode.align(solution.fullPath, maxFileLen)}[/color]"
         echo solution.label
 
-        if max < solution.label.len: max = solution.label.len
-
-    discard terminalSet(&"window.size={max+1}x{config.size.height}")
+    let max = maxLabelLen + maxFileLen + 5
+    discard terminalSet(&"window.size={max}x{config.sizeY.get()}")
 
     return AppState(
         items: solutionsList,
         colors: (
-            black: config.black,
-            white: config.white,
-            front: config.front, 
-            back: config.back
+            front: colorFromName(config.theme.get().front),
+            back: colorFromName(config.theme.get().back)
         ),
         orderMap: orderMap,
         invOrderMap: invOrderMap,
@@ -266,50 +238,58 @@ proc initAppState(config: AppConfig): AppState =
 discard terminalOpen()
 discard terminalSet("window.title='choose project'")
 
-let white = colorFromName("white")
-let black = colorFromName("black")
+let defaultTheme = AppTheme(
+    front: "white",
+    back: "black"
+)
 
-terminalColor(white);
-terminalBackgroundColor(black);
+let defaultYSize = 40
 
-let frontColor = terminalGetCurrentColor();
-let backColor = terminalGetCurrentBackgroundColor()
+var config: AppConfig
+if not tryLoadConfig(config):
+    let vsHome = getEnv("VSHOME")
+    echo "VSHOME=", vsHome
+    config = AppConfig(
+        executable: vsHome,
+        theme: some(defaultTheme),
+        sizeY: some(defaultYSize)
+    )
 
-let vsHome = getEnv("VSHOME")
-echo "VSHOME=", vsHome
-let config:AppConfig = AppConfig(
-    white: white, 
-    black: black, 
-    front: frontColor, 
-    back: backColor, 
-    executable: vsHome,
-    size: (0, 40))
+if config.theme.isNone():
+    config.theme = some(defaultTheme)
 
-var state = initAppState(config)
-echo &"found {state.items.len} elements"
+if config.sizeY.isNone():
+    config.sizeY = some(defaultYSize)
+
+var appState = initAppState(config)
+
+terminalColor(appState.colors.front);
+terminalBackgroundColor(appState.colors.back);
+
+echo &"found {appState.items.len} elements"
 
 var lastInput: int32 = 0;
 
-state.isRunning = state.items.len > 0
+appState.isRunning = appState.items.len > 0
 
-while state.isRunning:
-    mutateState(state)
-    render(config, state)
+while appState.isRunning:
+    mutateState(appState)
+    render(config, appState)
     lastInput = terminalRead()
     case lastInput:
         of TK_CLOSE, TK_ESCAPE:
             break;
         of TK_UP, TK_DOWN:
-            handleUpDown(state, lastInput)
+            handleUpDown(appState, lastInput)
         of TK_BACKSPACE:
-            handleBackspace(state)
+            handleBackspace(appState)
         of TK_ENTER:
-            handleEnter(state)
+            handleEnter(appState)
         else:
             discard
 
     if(terminalCheck(TK_WCHAR)):
-        handleKeyInput(state, terminalState(TK_WCHAR))
+        handleKeyInput(appState, terminalState(TK_WCHAR))
 
 encodingConverter.close()
 terminalClose()
