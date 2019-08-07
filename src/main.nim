@@ -39,7 +39,7 @@ iterator walkDir(dir: string, depth: int, skipList: openArray[string]): string =
     for path in walkDirProc(dir, depth, skipList):
         yield path
 
-proc getSolutionsList(): auto =
+proc getSolutionsList(workingDir: string): auto =
     var items: seq[SolutionItem] = @[]
     var counter: int = 0
 
@@ -49,13 +49,12 @@ proc getSolutionsList(): auto =
         "packages",
         "tools"
     ]
-    let appDir = getAppDir()
-    echo "working in ", appDir
+    echo "working in ", workingDir
 
     var maxFileLen = 0;
     var maxLabelLen = 0;
 
-    for file in walkDir(appDir, 2, skipList):
+    for file in walkDir(workingDir, 2, skipList):
         let (_, name, ext) = splitFile(file)
         if ext!=".sln":
             continue
@@ -70,7 +69,7 @@ proc getSolutionsList(): auto =
         let newItem = SolutionItem(
             id: counter, 
             label: label,
-            fullPath: file.replace(appDir, "."), 
+            fullPath: file.replace(workingDir, "."), 
             isVisible: true)
 
         items.add(newItem)
@@ -194,23 +193,23 @@ proc handleBackspace(state: var AppState): void =
     if len > 0:
         state.inputChars.del(len - 1)
 
-proc handleEnter(state: var AppState): void =
+proc handleEnter(config: AppConfig, state: var AppState): void =
     if state.selectedIndex >= 0:
         let selectedItem = state.items[state.selectedIndex]
         echo &"handling selection of {selectedItem.label} {selectedItem.fullPath}"
 
-        let (workingDir, _, _) = splitFile(state.executable)
-        let appDir = getAppDir()
+        let (workingDir, _, _) = splitFile(config.executable)
+        let appDir = config.workingDir.get()
 
         discard startProcess(
-            state.executable, 
+            config.executable, 
             workingDir,
             [appDir / selectedItem.fullPath])
         echo "done."
         state.isRunning = false
 
 proc initAppState(config: AppConfig): AppState = 
-    var (solutionsList, maxLabelLen, maxFileLen) = getSolutionsList()
+    var (solutionsList, maxLabelLen, maxFileLen) = getSolutionsList(config.workingDir.get())
     var orderMap = initTable[int, int]()
     var invOrderMap = initTable[int, int]()
 
@@ -229,8 +228,7 @@ proc initAppState(config: AppConfig): AppState =
             back: colorFromName(config.theme.get().back)
         ),
         orderMap: orderMap,
-        invOrderMap: invOrderMap,
-        executable: config.executable
+        invOrderMap: invOrderMap
     )
 
 discard terminalOpen()
@@ -259,6 +257,9 @@ if config.theme.isNone():
 if config.sizeY.isNone():
     config.sizeY = some(defaultYSize)
 
+if config.workingDir.isNone():
+    config.workingDir = some(getAppDir())
+
 var appState = initAppState(config)
 
 terminalColor(appState.colors.front);
@@ -282,7 +283,7 @@ while appState.isRunning:
         of TK_BACKSPACE:
             handleBackspace(appState)
         of TK_ENTER:
-            handleEnter(appState)
+            handleEnter(config, appState)
         else:
             discard
 

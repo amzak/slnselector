@@ -9,6 +9,7 @@ type
         executable*: string
         theme*: Option[AppTheme]
         sizeY*: Option[int]
+        workingDir*: Option[string]
 
 const 
     fileName = "config.json"

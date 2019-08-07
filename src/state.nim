@@ -15,4 +15,3 @@ type
             back: BLColor
         ]
         isRunning*: bool
-        executable*: string
