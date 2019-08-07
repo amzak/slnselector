@@ -21,9 +21,6 @@ proc toString(str: seq[char]): string =
     for ch in str:
         add(result, ch)
 
-proc setVisibility(solutionItem: var SolutionItem, isVisible: bool): void =
-    solutionItem.isVisible = isVisible
-
 proc walkDirProc(dir: string, depth: int, skipList: openArray[string]): seq[string] =
     result = @[]
     for kind, path in walkDir(dir):
@@ -76,9 +73,6 @@ proc getSolutionsList(): auto =
             fullPath: file.replace(appDir, "."), 
             isVisible: true)
 
-        echo label, " ", labelLen
-        echo file, " ", fileLen
-
         items.add(newItem)
         counter += 1
 
@@ -93,8 +87,8 @@ proc render(config: AppConfig, state: AppState): void =
     discard terminalPrint(newBLPoint(1, 1), &"> {state.inputString}")
 
     var prevLabel: string
-    var renderedItemsCounter = 0
-
+    var skippedItemsCounter = 0
+    
     for solution in state.items:
         if not solution.isVisible:
             continue;
@@ -111,34 +105,41 @@ proc render(config: AppConfig, state: AppState): void =
 
         prevLabel = solution.label
         let order = state.invOrderMap[solution.id]
-        let y = order + 2
-        discard terminalPrint(newBLPoint(1, BLInt(y)), solution.label)
-        renderedItemsCounter += 1
-        if y >= config.sizeY.get() - 2:
-            break;
+        var y = order + 2
 
-    if state.items.len > renderedItemsCounter:
-        discard terminalPrint(newBLPoint(1, BLInt(config.sizeY.get() - 1)), &"... and {state.items.len - renderedItemsCounter} more")
+        if y >= config.sizeY.get() - 1:
+            skippedItemsCounter += 1
+            continue;
+
+        discard terminalPrint(newBLPoint(1, BLInt(order + 2)), solution.label)
+
+    if skippedItemsCounter > 0:
+        discard terminalPrint(newBLPoint(1, BLInt(config.sizeY.get() - 1)), &"... and {skippedItemsCounter} more")
 
     terminalRefresh()
 
 proc computeVisibility(input: string, items: var seq[SolutionItem]): void =
+    var isVisible: bool
+
     for item in items.mitems:
-        var isVisible = false
+        isVisible = false
         if input.len == 0:
-            isVisible = true
+            item.isVisible = true
+            item.rank = high(int)
+            continue
 
         let rank = item.label.find(input)
         isVisible = isVisible or rank >= 0
-
         item.rank = if rank>=0: rank else: high(int)
-        item.setVisibility(isVisible)
+
+        item.isVisible = isVisible
 
 proc sortInvOrderMap(state: var AppState): void =
     var counter = 0
     for item in state.items.sortedByIt((it.rank, it.label)):
         state.invOrderMap[item.id] = counter
         state.orderMap[counter] = item.id
+
         counter += 1
 
     state.selectedIndex = state.orderMap[0]
@@ -213,13 +214,10 @@ proc initAppState(config: AppConfig): AppState =
     var orderMap = initTable[int, int]()
     var invOrderMap = initTable[int, int]()
 
-    echo maxLabelLen
-    echo maxFileLen
     for solution in solutionsList.mitems:
         orderMap[solution.id] = solution.id
         invOrderMap[solution.id] = solution.id
         solution.label = &"{unicode.alignLeft(solution.label, maxLabelLen)} [color=gray]\u2502 {unicode.align(solution.fullPath, maxFileLen)}[/color]"
-        echo solution.label
 
     let max = maxLabelLen + maxFileLen + 5
     discard terminalSet(&"window.size={max}x{config.sizeY.get()}")
