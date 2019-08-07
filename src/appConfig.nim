@@ -10,7 +10,7 @@ type
         theme*: Option[AppTheme]
         sizeY*: Option[int]
         workingDir*: Option[string]
-
+        depth*: Option[int]
 const 
     fileName = "config.json"
     

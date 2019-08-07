@@ -39,7 +39,7 @@ iterator walkDir(dir: string, depth: int, skipList: openArray[string]): string =
     for path in walkDirProc(dir, depth, skipList):
         yield path
 
-proc getSolutionsList(workingDir: string): auto =
+proc getSolutionsList(workingDir: string, depth: int): auto =
     var items: seq[SolutionItem] = @[]
     var counter: int = 0
 
@@ -49,12 +49,12 @@ proc getSolutionsList(workingDir: string): auto =
         "packages",
         "tools"
     ]
-    echo "working in ", workingDir
+    echo &"working in {workingDir} with depth {depth}"
 
     var maxFileLen = 0;
     var maxLabelLen = 0;
 
-    for file in walkDir(workingDir, 2, skipList):
+    for file in walkDir(workingDir, depth, skipList):
         let (_, name, ext) = splitFile(file)
         if ext!=".sln":
             continue
@@ -209,7 +209,7 @@ proc handleEnter(config: AppConfig, state: var AppState): void =
         state.isRunning = false
 
 proc initAppState(config: AppConfig): AppState = 
-    var (solutionsList, maxLabelLen, maxFileLen) = getSolutionsList(config.workingDir.get())
+    var (solutionsList, maxLabelLen, maxFileLen) = getSolutionsList(config.workingDir.get(), config.depth.get())
     var orderMap = initTable[int, int]()
     var invOrderMap = initTable[int, int]()
 
@@ -259,6 +259,9 @@ if config.sizeY.isNone():
 
 if config.workingDir.isNone():
     config.workingDir = some(getAppDir())
+
+if config.depth.isNone():
+    config.depth = some(2)
 
 var appState = initAppState(config)
 
