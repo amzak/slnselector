@@ -15,3 +15,4 @@ type
             back: BLColor
         ]
         isRunning*: bool
+        isDataLoaded*: bool
