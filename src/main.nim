@@ -316,6 +316,7 @@ while appState.isRunning:
         lastInput = terminalRead()
     else:
         if not terminalHasInput():
+            terminalDelay(1);
             continue
         else:
             lastInput = terminalRead()
