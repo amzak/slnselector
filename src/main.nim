@@ -11,13 +11,12 @@ import bearlibterminal,
     domain,
     state,
     theme,
-    options,
-    threadpool
+    options
 
 var
     encodingConverter = open("utf-8", "utf-16")
-    channel = Channel[seq[SolutionItem]]()
-    loadingThread: Thread[AppConfig]
+    channel = Channel[SolutionItem]()
+    loadingThread: Thread[tuple[dir: string, depth: int]]
 
 proc toString(str: seq[char]): string =
     result = newStringOfCap(len(str))
@@ -42,8 +41,7 @@ iterator walkDir(dir: string, depth: int, skipList: openArray[string]): string =
     for path in walkDirProc(dir, depth, skipList):
         yield path
 
-proc getSolutionsList(workingDir: string, depth: int): auto =
-    var items: seq[SolutionItem] = @[]
+proc getSolutionsList(params: tuple[dir: string, depth: int]) {.thread.} =
     var counter: int = 0
 
     let skipList = [
@@ -52,6 +50,9 @@ proc getSolutionsList(workingDir: string, depth: int): auto =
         "packages",
         "tools"
     ]
+
+    let (workingDir, depth) = params
+
     echo &"working in {workingDir} with depth {depth}"
 
     for file in walkDir(workingDir, depth, skipList):
@@ -66,16 +67,13 @@ proc getSolutionsList(workingDir: string, depth: int): auto =
             fullPath: file.replace(workingDir, "."), 
             isVisible: true)
 
-        items.add(newItem)
         counter += 1
+        channel.send(newItem)
+        echo "sent ", newItem.label
 
-    return items
-
-proc loadSolutions(config: AppConfig) {.thread.} =
-    var solutionsList = getSolutionsList(config.workingDir.get(), config.depth.get())
-    channel.send(solutionsList)
-
-    echo &"loaded {solutionsList.len}"
+proc loadSolutions(thread: var Thread, config: AppConfig) =
+    let params: tuple[dir: string, depth: int] = (dir: config.workingDir.get(), depth: config.depth.get())
+    thread.createThread(getSolutionsList, params)
 
 proc render(config: AppConfig, state: AppState): void =
     terminalColor(state.colors.front)
@@ -87,7 +85,6 @@ proc render(config: AppConfig, state: AppState): void =
     if not state.isDataLoaded:
         discard terminalPrint(newBLPoint(1, 2), "loading...")
 
-    var prevLabel: string
     var skippedItemsCounter = 0
     
     for solution in state.items:
@@ -104,7 +101,6 @@ proc render(config: AppConfig, state: AppState): void =
             terminalColor(frontColor);
             terminalBackgroundColor(backColor);
 
-        prevLabel = solution.label
         let order = state.invOrderMap[solution.id]
         var y = order + 2
 
@@ -112,7 +108,17 @@ proc render(config: AppConfig, state: AppState): void =
             skippedItemsCounter += 1
             continue;
 
-        discard terminalPrint(newBLPoint(1, BLInt(order + 2)), solution.label)
+        let labelRect = newBLRect(1, BLInt(order + 2), BLInt(state.maxLabelLen), 1)
+        var size = terminalPrint(labelRect, TK_ALIGN_LEFT, unicode.alignLeft(solution.label, state.maxLabelLen))
+        let labelSize = cast[int](size.w)
+
+        let pathRect = newBLRect(BLInt(state.maxLabelLen + 4), BLInt(order + 2), BLInt(state.maxFileLen), 1)
+        size = terminalPrint(pathRect, TK_ALIGN_RIGHT, solution.fullPath)
+        let pathSize = cast[int](size.w)
+
+        let separatorWidth = state.maxLabelLen + state.maxFileLen + 3 - labelSize - pathSize
+        let separatorRect = newBLRect(BLInt(state.maxLabelLen + 1), BLInt(order + 2), BLInt(separatorWidth), 1)
+        discard terminalPrint(separatorRect, TK_ALIGN_CENTER , unicode.alignLeft("\u2502", separatorWidth))
 
     if skippedItemsCounter > 0:
         discard terminalPrint(newBLPoint(1, BLInt(config.sizeY.get() - 1)), &"... and {skippedItemsCounter} more")
@@ -225,43 +231,34 @@ proc initAppState(config: AppConfig): AppState =
         invOrderMap: initTable[int, int]()
     )
 
+proc addSolution(state: var AppState, solution: var SolutionItem) =
+    let fileLen = runeLen(solution.fullPath);
+    let labelLen = runeLen(solution.label);
+
+    if fileLen > state.maxFileLen: state.maxFileLen = fileLen
+    if labelLen > state.maxLabelLen: state.maxLabelLen = labelLen
+
+    state.orderMap[solution.id] = solution.id
+    state.invOrderMap[solution.id] = solution.id
+
+    state.items.add(solution)
+
 proc recvData(config: AppConfig, state: var AppState) =
-    var (hasData, solutions) = channel.tryRecv()
-    if not hasData:
+    state.isDataLoaded = not loadingThread.running()
+
+    var counter: int = 0
+    while true:
+        var (hasData, solution) = channel.tryRecv()
+        if not hasData:
+            break
+        state.addSolution(solution)
+        counter += 1
+
+    if counter == 0:
         return
-    echo "receiving data..."
-    var orderMap = initTable[int, int]();
-    var invOrderMap = initTable[int, int]();
 
-    var maxFileLen = 0;
-    var maxLabelLen = 0;
-
-    for solution in solutions.mitems:
-        let fileLen = runeLen(solution.fullPath);
-        let labelLen = runeLen(solution.label);
-
-        if fileLen > maxFileLen: maxFileLen = fileLen
-        if labelLen > maxLabelLen: maxLabelLen = labelLen
-
-        orderMap[solution.id] = solution.id
-        invOrderMap[solution.id] = solution.id
-
-    for solution in solutions.mitems:
-        solution.label = &"{unicode.alignLeft(solution.label, maxLabelLen)} [color=gray]\u2502 {unicode.align(solution.fullPath, maxFileLen)}[/color]"
-
-    state.items = solutions
-    state.orderMap = orderMap
-    state.invOrderMap = invOrderMap
-
-    let max = maxLabelLen + maxFileLen + 5
+    let max = state.maxLabelLen + state.maxFileLen + 5
     discard terminalSet(&"window.size={max}x{config.sizeY.get()}")
-
-    echo "data received"
-
-    channel.close()
-
-    state.isDataLoaded = true
-    echo "channel closed"
 
 discard terminalOpen()
 discard terminalSet("window.title='choose project'")
@@ -297,7 +294,7 @@ if config.depth.isNone():
 
 open(channel)
 
-loadingThread.createThread(loadSolutions, config)
+loadSolutions(loadingThread, config)
 
 var appState = initAppState(config)
 
@@ -312,14 +309,16 @@ while appState.isRunning:
     recvData(config, appState);
     mutateState(appState)
     render(config, appState)
+
     if appState.isDataLoaded:
         lastInput = terminalRead()
     else:
-        if not terminalHasInput():
+        if terminalHasInput():
+            lastInput = terminalRead()
+        else:
             terminalDelay(1);
             continue
-        else:
-            lastInput = terminalRead()
+
     case lastInput:
         of TK_CLOSE, TK_ESCAPE:
             break;
@@ -337,3 +336,4 @@ while appState.isRunning:
 
 encodingConverter.close()
 terminalClose()
+channel.close()

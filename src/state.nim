@@ -16,3 +16,5 @@ type
         ]
         isRunning*: bool
         isDataLoaded*: bool
+        maxFileLen*: int
+        maxLabelLen*: int
