@@ -4,14 +4,14 @@ import bearlibterminal,
     strutils,
     strformat,
     algorithm,
-    tables,
     encodings,
     unicode,
     appConfig,
     domain,
     state,
     theme,
-    options
+    options,
+    lists
 
 var
     encodingConverter = open("utf-8", "utf-16")
@@ -85,28 +85,25 @@ proc render(config: AppConfig, state: AppState): void =
     if not state.isDataLoaded:
         discard terminalPrint(newBLPoint(1, 2), "loading...")
 
-    var skippedItemsCounter = 0
-    
-    for solution in state.items:
+    var order = 0
+
+    for solutionNode in nodes(state.orderedList):
+        let solution = solutionNode.value
+
         if not solution.isVisible:
             continue;
+
+        let isSelected = solutionNode == state.selectedItem
 
         let frontColor = state.colors.front
         let backColor = state.colors.back
 
-        if state.selectedIndex == solution.id:
+        if isSelected:
             terminalColor(backColor);
             terminalBackgroundColor(frontColor);
         else:
             terminalColor(frontColor);
             terminalBackgroundColor(backColor);
-
-        let order = state.invOrderMap[solution.id]
-        var y = order + 2
-
-        if y >= config.sizeY.get() - 1:
-            skippedItemsCounter += 1
-            continue;
 
         let labelRect = newBLRect(1, BLInt(order + 2), BLInt(state.maxLabelLen), 1)
         var size = terminalPrint(labelRect, TK_ALIGN_LEFT, unicode.alignLeft(solution.label, state.maxLabelLen))
@@ -120,36 +117,37 @@ proc render(config: AppConfig, state: AppState): void =
         let separatorRect = newBLRect(BLInt(state.maxLabelLen + 1), BLInt(order + 2), BLInt(separatorWidth), 1)
         discard terminalPrint(separatorRect, TK_ALIGN_CENTER , unicode.alignLeft("\u2502", separatorWidth))
 
-    if skippedItemsCounter > 0:
-        discard terminalPrint(newBLPoint(1, BLInt(config.sizeY.get() - 1)), &"... and {skippedItemsCounter} more")
+        order += 1
 
     terminalRefresh()
 
+proc computeVisibility(input: string, item: var SolutionItem) =
+    var isVisible = false
+    if input.len == 0:
+        item.isVisible = true
+        item.rank = high(int)
+        return
+
+    let rank = item.label.find(input)
+    isVisible = isVisible or rank >= 0
+    item.rank = if rank>=0: rank else: high(int)
+    item.isVisible = isVisible
+
 proc computeVisibility(input: string, items: var seq[SolutionItem]): void =
-    var isVisible: bool
-
     for item in items.mitems:
-        isVisible = false
-        if input.len == 0:
-            item.isVisible = true
-            item.rank = high(int)
-            continue
+        computeVisibility(input, item)
 
-        let rank = item.label.find(input)
-        isVisible = isVisible or rank >= 0
-        item.rank = if rank>=0: rank else: high(int)
+proc sortOrderedList(state: var AppState): void =
+    state.orderedList = initDoublyLinkedList[SolutionItem]()
 
-        item.isVisible = isVisible
-
-proc sortInvOrderMap(state: var AppState): void =
     var counter = 0
     for item in state.items.sortedByIt((it.rank, it.label)):
-        state.invOrderMap[item.id] = counter
-        state.orderMap[counter] = item.id
-
+        if counter > state.maxVisibleItems:
+            break
+        state.orderedList.append(item)
         counter += 1
 
-    state.selectedIndex = state.orderMap[0]
+    state.selectedItem = state.orderedList.head
 
 proc mutateState(state: var AppState): void =
 
@@ -169,19 +167,20 @@ proc mutateState(state: var AppState): void =
 
     state.inputString = newInputString
     computeVisibility(state.inputString, state.items)
-    sortInvOrderMap(state)
+    sortOrderedList(state)
 
 proc moveSelection(state: var AppState, delta: int): void =
-    var order = state.invOrderMap[state.selectedIndex]
-
-    order += delta
-    let count = len(state.items)
-    if order >= count:
-        order = count - 1
-    if order < 0:
-        order = 0
-    
-    state.selectedIndex = state.orderMap[order]
+    let direction = delta >= 0
+    for i in 1..abs(delta):
+        if direction:
+            if state.selectedItem.next == nil:
+                return
+            state.selectedItem = state.selectedItem.next
+        else:
+            if state.selectedItem.prev == nil:
+                return
+            state.selectedItem = state.selectedItem.prev
+    echo state.selectedItem.value
 
 proc handleUpDown(state: var AppState, input: int32): void = 
     var delta = 0
@@ -203,8 +202,8 @@ proc handleBackspace(state: var AppState): void =
         state.inputChars.del(len - 1)
 
 proc handleEnter(config: AppConfig, state: var AppState): void =
-    if state.selectedIndex >= 0:
-        let selectedItem = state.items[state.selectedIndex]
+    if state.selectedItem != nil:
+        let selectedItem = state.selectedItem.value
         echo &"handling selection of {selectedItem.label} {selectedItem.fullPath}"
 
         let (workingDir, _, _) = splitFile(config.executable)
@@ -227,8 +226,8 @@ proc initAppState(config: AppConfig): AppState =
             front: colorFromName(config.theme.get().front),
             back: colorFromName(config.theme.get().back)
         ),
-        orderMap: initTable[int, int](),
-        invOrderMap: initTable[int, int]()
+        orderedList: initDoublyLinkedList[SolutionItem](),
+        maxVisibleItems: config.sizeY.get() - 4
     )
 
 proc addSolution(state: var AppState, solution: var SolutionItem) =
@@ -238,27 +237,58 @@ proc addSolution(state: var AppState, solution: var SolutionItem) =
     if fileLen > state.maxFileLen: state.maxFileLen = fileLen
     if labelLen > state.maxLabelLen: state.maxLabelLen = labelLen
 
-    state.orderMap[solution.id] = solution.id
-    state.invOrderMap[solution.id] = solution.id
+    computeVisibility(state.inputString, solution)
 
     state.items.add(solution)
+
+proc appendOrdered(state: var AppState, solution: var SolutionItem) =
+    if state.orderedList.head == nil:
+        state.orderedList.append(solution)
+        state.selectedItem = state.orderedList.head
+        echo "added first"
+    else:
+        for item in state.orderedList.nodes():
+            if item.next == nil:
+                state.orderedList.append(solution)
+                echo "added last"
+                return
+
+            if solution > item.value and solution <= item.next.value:
+                let newNext = newDoublyLinkedNode(solution)
+                newNext.next = item.next
+                newNext.prev = item
+                item.next.prev = newNext
+                item.next = newNext
+                echo &"added {newNext.value.label} after {item.value.label}"
+                return
 
 proc recvData(config: AppConfig, state: var AppState) =
     state.isDataLoaded = not loadingThread.running()
 
+    var maxOrdered = state.maxVisibleItems
     var counter: int = 0
     while true:
         var (hasData, solution) = channel.tryRecv()
         if not hasData:
             break
         state.addSolution(solution)
+        state.appendOrdered(solution)
         counter += 1
+
+    if state.isDataLoaded:
+        var orderedCounter = 0
+        for item in nodes(state.orderedList):
+            if orderedCounter >= maxOrdered:
+                item.next = nil
+            orderedCounter += 1
+
+        echo "loading completed"
 
     if counter == 0:
         return
 
     let max = state.maxLabelLen + state.maxFileLen + 5
-    discard terminalSet(&"window.size={max}x{config.sizeY.get()}")
+    discard terminalSet(&"window.size={max}x{state.maxVisibleItems + 3}")
 
 discard terminalOpen()
 discard terminalSet("window.title='choose project'")

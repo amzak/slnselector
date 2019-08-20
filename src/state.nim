@@ -1,13 +1,12 @@
-import tables,
-    domain,
-    bearlibterminal
+import domain,
+    bearlibterminal,
+    lists
 
 type
     AppState* = object
         items*: seq[SolutionItem]
-        orderMap*: Table[int, int]
-        invOrderMap*: Table[int, int]
-        selectedIndex*: int
+        orderedList*: DoublyLinkedList[SolutionItem]
+        selectedItem*: DoublyLinkedNode[SolutionItem]
         inputChars*: seq[int]
         inputString*: string
         colors*: tuple[
@@ -18,3 +17,4 @@ type
         isDataLoaded*: bool
         maxFileLen*: int
         maxLabelLen*: int
+        maxVisibleItems*: int
