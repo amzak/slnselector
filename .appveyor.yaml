@@ -20,6 +20,8 @@ cache:
 install:
   # use the newest versions documented here: https://www.appveyor.com/docs/windows-images-software/#mingw-msys-cygwin
   - SET PATH=%MINGW_PATH%;%PATH%
+  #- IF /I %APPVEYOR_REPO_TAG%=="true" BUILD_VERSION=%APPVEYOR_REPO_TAG_NAME% ELSE BUILD_VERSION=%APPVEYOR_REPO_COMMIT~-7%
+  - FOR /f %%G IN ('git describe') DO SET BUILD_VERSION=%%G
 
   # Install Nim
   - MKDIR %CD%\tools_tmp
@@ -37,10 +39,10 @@ build_script:
   - nimble.exe buildRelease
 
 after_build:
-  - 7z a slnselector_%APPVEYOR_BUILD_VERSION%.zip slnselector.exe libBearLibTerminal.dll
+  - 7z a slnselector_%BUILD_VERSION%.zip slnselector.exe libBearLibTerminal.dll
 
 artifacts:
-  - path: slnselector_%APPVEYOR_BUILD_VERSION%.zip
+  - path: slnselector_%BUILD_VERSION%.zip
     name: slnselector
 
 test_script:
