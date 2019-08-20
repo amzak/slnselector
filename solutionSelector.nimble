@@ -25,7 +25,7 @@ task debug, "build&run":
     exec "./main.exe"
 
 task buildRelease, "build release":
-    exec "nimble build --app:gui -d:release --opt:speed"
+    exec "nimble build --app:gui -d:release --opt:speed -y"
 
 task deployDebug, "deployDebug":
     buildDebugTask()
