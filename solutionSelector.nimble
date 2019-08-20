@@ -14,23 +14,25 @@ requires "nim >= 0.20.0",
 
 const
     deployPath = "d:\\projects"
-    outputDebugExe = "slnSelectorDebug.exe"
-    outputReleaseExe = "slnSelector.exe"
+    outputDebugExe = "slnselectordebug.exe"
+    outputReleaseExe = "slnselector.exe"
 
 task buildDebug, "build":
     exec "nimble build --app:console -d:debug --debuginfo --lineDir:on --debugger:native"
+    cpFile "./main.exe", outputDebugExe
 
 task debug, "build&run":
     buildDebugTask()
     exec "./main.exe"
 
 task buildRelease, "build release":
-    exec "nimble build --app:gui -d:release --opt:speed -y"
+    exec "nimble build -y --app:gui -d:release --opt:speed"
+    cpFile "./main.exe", outputReleaseExe
 
 task deployDebug, "deployDebug":
     buildDebugTask()
-    cpFile "./main.exe", "d:\\projects" / outputDebugExe
+    cpFile outputDebugExe, "d:\\projects" / outputDebugExe
 
 task deployRelease, "deployRelease":
     buildReleaseTask()
-    cpFile "./main.exe", "d:\\projects" / outputReleaseExe
+    cpFile outputReleaseExe, "d:\\projects" / outputReleaseExe
