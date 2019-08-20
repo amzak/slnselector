@@ -1,0 +1,42 @@
+version: '{build}'
+
+matrix:
+  fast_finish: true
+
+environment:
+  matrix:
+    - NIM_ARCHIVE: nim-0.20.2_x64.zip
+      NIM_DIR: nim-0.20.2
+      NIM_URL: https://nim-lang.org/download/nim-0.20.2_x64.zip
+      MINGW_PATH: C:\mingw-w64\x86_64-6.3.0-posix-seh-rt_v5-rev1\mingw64\bin
+      BEARLIB_ARCHIVE: bearlibterminal_0.15.7.zip
+      BEARLIB_URL: http://foo.wyrd.name/_media/en:bearlibterminal:bearlibterminal_0.15.7.zip
+      platform: x64
+
+cache:
+  - '%NIM_ARCHIVE% -> .appveyor.yml'
+  - '%BEARLIB_ARCHIVE% -> .appveyor.yml'
+  - '%USERPROFILE%\.nuget\packages -> .appveyor.yml'
+
+install:
+  # use the newest versions documented here: https://www.appveyor.com/docs/windows-images-software/#mingw-msys-cygwin
+  - SET PATH=%MINGW_PATH%;%PATH%
+
+  # Install Nim
+  - MKDIR %CD%\tools_tmp
+  - IF not exist "%NIM_ARCHIVE%" appveyor DownloadFile "%NIM_URL%" -FileName "%NIM_ARCHIVE%"
+  - 7z x -y "%NIM_ARCHIVE%" -o"%CD%\tools_tmp"> nul
+  - SET PATH=%CD%\tools_tmp\%NIM_DIR%\bin;%PATH%
+
+  # Install BearLib
+  - MKDIR %CD%\lib
+  - IF not exist "%BEARLIB_ARCHIVE%" appveyor DownloadFile "%BEARLIB_URL%" -FileName "%BEARLIB_ARCHIVE%"
+  - 7z x -y "%BEARLIB_ARCHIVE%" -o"%CD%\lib"> nul
+
+build_script:
+  - nimble.exe buildRelease
+
+test_script:
+  - nimble.exe test
+
+deploy: off
