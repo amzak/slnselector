@@ -30,7 +30,7 @@ install:
   - SET PATH=%CD%\tools_tmp\%NIM_DIR%\bin;%PATH%
 
   # Install BearLib
-  - MKDIR %CD%\lib
+  - IF not exist "%CD%\lib\" MKDIR "CD%\lib"
   - IF not exist "%BEARLIB_ARCHIVE%" appveyor DownloadFile "%BEARLIB_URL%" -FileName "%BEARLIB_ARCHIVE%"
   - 7z x -y "%BEARLIB_ARCHIVE%" -o"%CD%\lib"> nul
   - COPY /Y lib\BearLibTerminal_0.15.7\Windows64\BearLibTerminal.dll libBearLibTerminal.dll

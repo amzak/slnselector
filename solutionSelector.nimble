@@ -2,8 +2,8 @@ import os
 # Package
 
 version       = "0.1.0"
-author        = "Anonymous"
-description   = "A new awesome nimble package"
+author        = "amzak"
+description   = "tiny tool for opening Visual Studio solution with search-as-you-type"
 license       = "MIT"
 srcDir        = "src"
 bin           = @["main"]
@@ -23,7 +23,7 @@ task buildDebug, "build":
 
 task debug, "build&run":
     buildDebugTask()
-    exec "./main.exe"
+    exec outputDebugExe
 
 task buildRelease, "build release":
     exec "nimble build -y --app:gui -d:release --opt:speed"
@@ -31,8 +31,8 @@ task buildRelease, "build release":
 
 task deployDebug, "deployDebug":
     buildDebugTask()
-    cpFile outputDebugExe, "d:\\projects" / outputDebugExe
+    cpFile outputDebugExe, deployPath / outputDebugExe
 
 task deployRelease, "deployRelease":
     buildReleaseTask()
-    cpFile outputReleaseExe, "d:\\projects" / outputReleaseExe
+    cpFile outputReleaseExe, deployPath / outputReleaseExe
