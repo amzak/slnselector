@@ -18,7 +18,7 @@ const
     outputReleaseExe = "slnselector.exe"
 
 task buildDebug, "build":
-    exec "nimble build --app:console -d:debug --debuginfo --lineDir:on --debugger:native"
+    exec "nimble build --app:console -d:debug --debuginfo --lineDir:on --debugger:native --hint:source:on"
     cpFile "./main.exe", outputDebugExe
 
 task debug, "build&run":
