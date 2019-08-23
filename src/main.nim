@@ -11,7 +11,9 @@ import bearlibterminal,
     state,
     theme,
     options,
-    lists
+    lists,
+    stopwatch,
+    times
 
 var
     encodingConverter = open("utf-8", "utf-16")
@@ -55,21 +57,22 @@ proc getSolutionsList(params: tuple[dir: string, depth: int]) {.thread.} =
 
     echo &"working in {workingDir} with depth {depth}"
 
-    for file in walkDir(workingDir, depth, skipList):
-        let (_, name, ext) = splitFile(file)
-        if ext!=".sln":
-            continue
-        let label = name.toLower()
+    withStopwatch("getting solutions"):
+        for file in walkDir(workingDir, depth, skipList):
+            let (_, name, ext) = splitFile(file)
+            if ext!=".sln":
+                continue
+            let label = name.toLower()
 
-        let newItem = SolutionItem(
-            id: counter, 
-            label: label,
-            fullPath: file.replace(workingDir, "."), 
-            isVisible: true)
+            let newItem = SolutionItem(
+                id: counter, 
+                label: label,
+                fullPath: file.replace(workingDir, "."), 
+                isVisible: true)
 
-        counter += 1
-        channel.send(newItem)
-        echo "sent ", newItem.label
+            counter += 1
+            channel.send(newItem)
+            echo "sent ", newItem.label
 
 proc loadSolutions(thread: var Thread, config: AppConfig) =
     let params: tuple[dir: string, depth: int] = (dir: config.workingDir.get(), depth: config.depth.get())
@@ -245,12 +248,12 @@ proc appendOrdered(state: var AppState, solution: var SolutionItem) =
     if state.orderedList.head == nil:
         state.orderedList.append(solution)
         state.selectedItem = state.orderedList.head
-        echo "added first"
+        echo &"added {solution.label} first"
     else:
         for item in state.orderedList.nodes():
             if item.next == nil:
                 state.orderedList.append(solution)
-                echo "added last"
+                echo &"added {solution.label} last"
                 return
 
             if solution > item.value and solution <= item.next.value:
@@ -263,26 +266,28 @@ proc appendOrdered(state: var AppState, solution: var SolutionItem) =
                 return
 
 proc recvData(config: AppConfig, state: var AppState) =
-    state.isDataLoaded = not loadingThread.running()
 
-    var maxOrdered = state.maxVisibleItems
-    var counter: int = 0
-    while true:
-        var (hasData, solution) = channel.tryRecv()
-        if not hasData:
-            break
-        state.addSolution(solution)
-        state.appendOrdered(solution)
-        counter += 1
+    withStopwatch("receiving data"):
+        state.isDataLoaded = not loadingThread.running()
 
-    if state.isDataLoaded:
-        var orderedCounter = 0
-        for item in nodes(state.orderedList):
-            if orderedCounter >= maxOrdered:
-                item.next = nil
-            orderedCounter += 1
+        var maxOrdered = state.maxVisibleItems
+        var counter: int = 0
+        while true:
+            var (hasData, solution) = channel.tryRecv()
+            if not hasData:
+                break
+            state.addSolution(solution)
+            state.appendOrdered(solution)
+            counter += 1
 
-        echo "loading completed"
+        if state.isDataLoaded:
+            var orderedCounter = 0
+            for item in nodes(state.orderedList):
+                if orderedCounter >= maxOrdered:
+                    item.next = nil
+                orderedCounter += 1
+
+            echo "loading completed"
 
     if counter == 0:
         return
@@ -300,27 +305,28 @@ let defaultTheme = AppTheme(
 
 let defaultYSize = 40
 
-var config: AppConfig
-if not tryLoadConfig(config):
-    let vsHome = getEnv("VSHOME")
-    echo "VSHOME=", vsHome
-    config = AppConfig(
-        executable: vsHome,
-        theme: some(defaultTheme),
-        sizeY: some(defaultYSize)
-    )
+withStopwatch("loading config:"):
+    var config: AppConfig
+    if not tryLoadConfig(config):
+        let vsHome = getEnv("VSHOME")
+        echo "VSHOME=", vsHome
+        config = AppConfig(
+            executable: vsHome,
+            theme: some(defaultTheme),
+            sizeY: some(defaultYSize)
+        )
 
-if config.theme.isNone():
-    config.theme = some(defaultTheme)
+    if config.theme.isNone():
+        config.theme = some(defaultTheme)
 
-if config.sizeY.isNone():
-    config.sizeY = some(defaultYSize)
+    if config.sizeY.isNone():
+        config.sizeY = some(defaultYSize)
 
-if config.workingDir.isNone():
-    config.workingDir = some(getAppDir())
+    if config.workingDir.isNone():
+        config.workingDir = some(getAppDir())
 
-if config.depth.isNone():
-    config.depth = some(2)
+    if config.depth.isNone():
+        config.depth = some(2)
 
 open(channel)
 
