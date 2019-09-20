@@ -200,6 +200,12 @@ proc handleKeyInput(state: var AppState, input: int32): void =
     state.inputChars.add(input)
 
 proc handleBackspace(state: var AppState): void =
+    let eraseAll = terminalCheck(TK_CONTROL)
+
+    if eraseAll:
+        state.inputChars = @[]
+        return
+        
     let len = state.inputChars.len
     if len > 0:
         state.inputChars.del(len - 1)
