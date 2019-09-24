@@ -9,7 +9,7 @@ srcDir        = "src"
 bin           = @["main"]
 
 # Dependencies
-requires "nim >= 0.20.0",
+requires "nim >= 1.0.0",
     "bearlibterminal"
 
 const
