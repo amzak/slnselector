@@ -21,9 +21,14 @@ task buildDebug, "build":
     exec "nimble build --app:console -d:debug --debuginfo --lineDir:on --debugger:native --hint:source:on"
     cpFile "./main.exe", outputDebugExe
 
-task debug, "build&run":
-    buildDebugTask()
-    exec outputDebugExe
+when defined(Windows):
+    task debug, "build&run":
+        exec "nimble build -d:nimDebugDlOpen -d:debug --debuginfo --lineDir:on --debugger:native"
+        exec "./main.exe"
+else:
+    task debug, "build&run":
+        exec "nimble build -d:nimDebugDlOpen --passL:\"-Wl,-rpath,.\" -d:debug --debuginfo --lineDir:on --debugger:native"
+        exec "./main"
 
 task buildRelease, "build release":
     exec "nimble build -y --app:gui -d:release --opt:speed"
