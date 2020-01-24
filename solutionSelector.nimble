@@ -6,6 +6,7 @@ author        = "amzak"
 description   = "tiny tool for opening Visual Studio solution with search-as-you-type"
 license       = "MIT"
 srcDir        = "src"
+binDir        = "build"
 bin           = @["main"]
 
 # Dependencies
@@ -24,11 +25,14 @@ task buildDebug, "build":
 when defined(Windows):
     task debug, "build&run":
         exec "nimble build -d:nimDebugDlOpen -d:debug --debuginfo --lineDir:on --debugger:native"
-        exec "./main.exe"
+        cpFile "./lib/windows/libBearLibTerminal.dll", "./build/libBearLibTerminal.dll"
+        exec "./build/main.exe"
 else:
     task debug, "build&run":
-        exec "nimble build -d:nimDebugDlOpen --passL:\"-Wl,-rpath,.\" -d:debug --debuginfo --lineDir:on --debugger:native"
-        exec "./main"
+        exec "nimble build -d:nimDebugDlOpen --passL:\"-Wl,-rpath,./\" -d:debug --debuginfo --lineDir:on --debugger:native"
+        cpFile "./lib/linux/libBearLibTerminal.so", "./build/libBearLibTerminal.so"
+        putEnv("LD_LIBRARY_PATH", "./build")
+        exec "./build/main"
 
 task buildRelease, "build release":
     exec "nimble build -y --app:gui -d:release --opt:speed"
